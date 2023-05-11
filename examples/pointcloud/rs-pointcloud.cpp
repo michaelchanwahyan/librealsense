@@ -11,12 +11,10 @@ void register_glfw_callbacks(window& app, glfw_state& app_state);
 
 int main(int argc, char * argv[]) try
 {
-    // Create a simple OpenGL window for rendering:
-    window app(1280, 720, "RealSense Pointcloud Example");
-    // Construct an object to manage view state
-    glfw_state app_state;
-    // register callbacks to allow manipulation of the pointcloud
-    register_glfw_callbacks(app, app_state);
+    float maxRange = 3.0f;
+    if (argc == 2) {
+        maxRange = std::stof(argv[1]);
+    }
 
     // Declare pointcloud object, for calculating pointclouds and texture mappings
     rs2::pointcloud pc;
@@ -28,30 +26,50 @@ int main(int argc, char * argv[]) try
     // Start streaming with default recommended configuration
     pipe.start();
 
-    while (app) // Application still alive?
+    float _x;
+    float _y;
+    float _z;
+    float _azi;
+    size_t roiPtCnt = 0;
+    size_t t = 0;
+    while(1)
     {
         // Wait for the next set of frames from the camera
         auto frames = pipe.wait_for_frames();
-
-        auto color = frames.get_color_frame();
-
-        // For cameras that don't have RGB sensor, we'll map the pointcloud to infrared instead of color
-        if (!color)
-            color = frames.get_infrared_frame();
-
-        // Tell pointcloud object to map to this color frame
-        pc.map_to(color);
 
         auto depth = frames.get_depth_frame();
 
         // Generate the pointcloud and texture mappings
         points = pc.calculate(depth);
 
-        // Upload the color frame to OpenGL
-        app_state.tex.upload(color);
-
-        // Draw the pointcloud
-        draw_pointcloud(app.width(), app.height(), app_state, points);
+        auto vertices = points.get_vertices();
+        _x = 0.0f;
+        _y = 0.0f;
+        _z = 0.0f;
+        _azi = 0.0f;
+        roiPtCnt = 0;
+        for (int i = 0; i < points.size(); ++i)
+        {
+            if (vertices[i].z                            // the object is in front of realsense
+                && vertices[i].y >=-0.1f                 // the object is above realsense horizon
+                && vertices[i].y <  0.1f                 // the object occupies 0-0.1m reason in front of realsense
+                && vertices[i].z * vertices[i].z         // the euclidean distance is within 1m
+                 + vertices[i].x * vertices[i].x < maxRange * maxRange
+                )
+            {
+                _z += vertices[i].z;
+                _x += vertices[i].x;
+                ++roiPtCnt;
+            }
+        }
+        printf("itr time: %d", (int)t++);
+        if (roiPtCnt) {
+            _z /= roiPtCnt; // get mean value of _z
+            _x /= roiPtCnt; // get mean value of _x
+            _azi = std::atan2f(_x, _z) * 180 / 3.141592654f;
+            printf("    x: %.2f    z: %.2f    azimuth: %.1f", _x, _z, _azi);
+        }
+        printf("\n");
     }
 
     return EXIT_SUCCESS;
